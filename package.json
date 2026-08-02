@@ -1,5 +1,5 @@
 {
-  "name": "@mmozer/sse-client",
+  "name": "@scubadiver214/sse-client",
   "version": "0.1.0",
   "description": "Transport-agnostic Server-Sent Events (SSE) client with a typed pub/sub API and optional React bindings.",
   "author": "Matt Mozer",

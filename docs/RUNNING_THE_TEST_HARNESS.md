@@ -35,7 +35,7 @@ One command starts a Vite/React UI on port **5173**. The contract mock is served
 ### 1. Install (once)
 
 ```bash
-cd lce-sse-client
+cd sse-client
 pnpm install
 ```
 
@@ -102,7 +102,7 @@ Use this when you only care about the SSE wire format (no browser).
 ### 1. Start the mock server
 
 ```bash
-cd lce-sse-client
+cd sse-client
 pnpm example:mock-server
 ```
 
@@ -152,11 +152,11 @@ Exercises the product path: Next.js dev mock → linked package → `Notificatio
 
 ### Prerequisites
 
-- Local link from `lce-menu-admin-ui` to this package (e.g. `"@lce/sse-client": "link:../lce-sse-client"` or equivalent)
+- Local link from `lce-menu-admin-ui` to this package (e.g. `"@lce/sse-client": "link:../sse-client"` or equivalent)
 - Build the client if the app resolves `dist/` rather than source:
 
 ```bash
-cd lce-sse-client
+cd sse-client
 pnpm build
 ```
 
@@ -200,7 +200,7 @@ If `NEXT_PUBLIC_LIVE_EVENTS_URL` is set, the app uses that URL template instead 
 
 | Goal | Command / path |
 |------|----------------|
-| UI harness | `pnpm example:harness` in `lce-sse-client` |
+| UI harness | `pnpm example:harness` in `sse-client` |
 | Harness URL | http://localhost:5173/ |
 | Harness stream (same origin) | http://localhost:5173/stream |
 | Harness source | `examples/harness/` |
