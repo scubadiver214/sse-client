@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -91,5 +92,28 @@ describe('useSse', () => {
 
     await waitFor(() => expect(result.current.error).not.toBeNull());
     expect(result.current.error?.reason).toBe('http-error');
+  });
+
+  it('disconnects after unmount under React Strict Mode (no leaked connection)', async () => {
+    // Fresh Response per fetch — a single Response body can only be read once, and
+    // Strict Mode's mount/cleanup/remount cycle connects twice during setup.
+    const fetchMock = vi.fn().mockImplementation(() => openResponse(['event: ping\ndata: {"at":1}\n\n']));
+
+    const { result, unmount } = renderHook(
+      () =>
+        useSse<TestEvents>({
+          url: 'https://example.test/strict',
+          fetch: fetchMock,
+          reconnect: { enabled: false },
+        }),
+      { wrapper: StrictMode }
+    );
+
+    await waitFor(() => expect(result.current.state).toBe('open'));
+    const client = result.current.client;
+    expect(client).not.toBeNull();
+
+    unmount();
+    expect(client?.getState()).toBe('closed');
   });
 });

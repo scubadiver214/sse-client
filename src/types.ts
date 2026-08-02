@@ -4,7 +4,7 @@ import type { BackoffOptions } from './backoff';
 export type SseConnectionState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed' | 'failed';
 
 /** Discriminates the reason a client transitions to `failed`/emits an error. */
-export type SseErrorReason = 'http-error' | 'network-error' | 'parse-error' | 'aborted';
+export type SseErrorReason = 'http-error' | 'network-error' | 'parse-error' | 'listener-error' | 'aborted';
 
 export class SseClientError extends Error {
   readonly reason: SseErrorReason;
@@ -65,7 +65,11 @@ export interface SseClientOptions<TEventMap extends SseEventMap = SseEventMap> {
   lastEventId?: string;
   /** Decodes a raw `data:` string for a given event name. Defaults to `JSON.parse`. */
   parse?: <K extends keyof TEventMap>(event: K, raw: string) => TEventMap[K];
-  /** Reconnection/backoff tuning. Set `enabled: false` to disable automatic reconnects entirely. */
+  /**
+   * Reconnection/backoff tuning. Set `enabled: false` to disable automatic reconnects entirely.
+   * `maxAttempts` counts consecutive *failed* connection attempts; a successful open resets the budget
+   * so clean server/LB closes do not permanently fail the client.
+   */
   reconnect?: BackoffOptions & { enabled?: boolean };
   /** Injectable `fetch` implementation (useful in tests or non-browser runtimes). */
   fetch?: typeof fetch;

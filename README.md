@@ -158,21 +158,31 @@ definitions (`UseSseOptions`, `UseSseResult`).
 ## Event contract
 
 This package places no constraints on event names/payloads. See
-[`EVENTS_CONTRACT.md`](./EVENTS_CONTRACT.md) for the concrete contract
-and `examples/mock-sse-server.ts` for a runnable server implementing it.
+[`docs/EVENTS_CONTRACT.md`](./docs/EVENTS_CONTRACT.md) for the concrete contract
+used by Menu Admin (and the local mocks).
+
+## Live demo / test harness
 
 ```bash
-pnpm example:mock-server   # serves http://localhost:4310/stream
+pnpm example:harness       # browser UI + same-origin SSE mock → http://localhost:5173
+pnpm example:mock-server   # standalone mock SSE → http://127.0.0.1:4310/stream
 ```
+
+- **UI harness** — Vite app under `examples/harness/` that uses `useSse` against a same-origin `/stream` mock. No login.
+- **Standalone mock** — Node server for `curl -N` / wire-format inspection.
+
+Full steps and troubleshooting: [`docs/RUNNING_THE_TEST_HARNESS.md`](./docs/RUNNING_THE_TEST_HARNESS.md).
 
 ## Development
 
 ```bash
 pnpm install
-pnpm test          # vitest
+pnpm test            # vitest (watch)
+pnpm test:run        # vitest once
 pnpm typecheck
 pnpm lint
-pnpm build          # tsup -> dist/
+pnpm build           # tsup -> dist/
+pnpm example:harness # live browser feed against the mock contract
 ```
 
 ## Publishing

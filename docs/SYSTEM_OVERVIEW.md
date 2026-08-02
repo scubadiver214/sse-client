@@ -64,7 +64,7 @@ sequenceDiagram
 
 **Step by step:**
 
-1. **Backend emits events.** Whenever something notable happens (a row changes in an audited table, a location finishes publishing its menu), the backend writes one line of text to an open HTTP connection per connected user, following a documented format (`EVENTS_CONTRACT.md`).
+1. **Backend emits events.** Whenever something notable happens (a row changes in an audited table, a location finishes publishing its menu), the backend writes one line of text to an open HTTP connection per connected user, following a documented format (`docs/EVENTS_CONTRACT.md`).
 2. **The request travels through the app's existing proxy.** `menu-admin-ui` already proxies all backend calls through `/api/backend/...` so it can attach the user's auth token server-side; the SSE stream rides through the exact same proxy, so no new auth mechanism was needed.
 3. **`@mmozer/sse-client` maintains the connection.** It opens the stream, reads it as it arrives (not waiting for it to finish — it never finishes while connected), and automatically reconnects with increasing delays if the connection drops (e.g. a network blip, or the server restarting), resuming from the last event it saw so nothing is missed.
 4. **The UI subscribes by event name.** `NotificationsMenu` asks for `audit-event`s; the menu-publisher dashboard asks for `menu-status-changed`s. Neither knows or cares about the other, and neither knows how the connection itself works — they just get a callback when their event arrives.
@@ -135,10 +135,11 @@ The client still speaks the exact same standard wire format any `EventSource`-ba
 
 **Done:**
 
-- `@mmozer/sse-client` — fully implemented, documented, and tested (37 unit tests covering the wire parser, reconnection/backoff, and the public API).
+- `@mmozer/sse-client` — fully implemented, documented, and tested (unit tests covering the wire parser, reconnection/backoff, React hooks, and the public API).
 - Integrated into `NotificationsMenu` and the menu-publisher dashboard/map.
 - A realistic mock event stream so the full flow (backend → proxy → client → UI) can be exercised today.
-- Documented event contract (`EVENTS_CONTRACT.md`) so the backend team has a precise target.
+- A no-login **UI test harness** (`pnpm example:harness`) that streams contract events in the browser via the real React hooks — see [RUNNING_THE_TEST_HARNESS.md](./RUNNING_THE_TEST_HARNESS.md).
+- Documented event contract (`docs/EVENTS_CONTRACT.md`) so the backend team has a precise target.
 
 **Not yet done — needs backend work:**
 
@@ -147,7 +148,7 @@ The client still speaks the exact same standard wire format any `EventSource`-ba
 
 **Suggested next steps:**
 
-1. Backend team implements the SSE endpoint per `EVENTS_CONTRACT.md`.
+1. Backend team implements the SSE endpoint per `docs/EVENTS_CONTRACT.md`.
 2. Wire up the drafted CI pipeline and do a first real publish of `@mmozer/sse-client` to the Azure Artifacts feed.
 3. Point `NEXT_PUBLIC_LIVE_EVENTS_URL` at the real endpoint per environment.
 
@@ -157,11 +158,13 @@ The client still speaks the exact same standard wire format any `EventSource`-ba
 
 | What | Where |
 | --- | --- |
-| The reusable client itself | `sse-client/src/SseClient.ts`, `parseEventStream.ts`, `backoff.ts` |
-| React hooks | `sse-client/src/react/useSse.ts`, `useSseEvent.ts` |
-| Event contract / schema | `sse-client/EVENTS_CONTRACT.md` |
-| Usage docs & API reference | `sse-client/README.md` |
-| Runnable example server | `sse-client/examples/mock-sse-server.ts` |
+| The reusable client itself | `src/SseClient.ts`, `parseEventStream.ts`, `backoff.ts` |
+| React hooks | `src/react/useSse.ts`, `useSseEvent.ts` |
+| Event contract / schema | `docs/EVENTS_CONTRACT.md` |
+| How to run the live demos | `docs/RUNNING_THE_TEST_HARNESS.md` |
+| Usage docs & API reference | `README.md` |
+| UI test harness (browser) | `examples/harness/` (`pnpm example:harness`) |
+| Standalone mock SSE server | `examples/mock-sse-server.ts` (`pnpm example:mock-server`) |
 | App-specific event types & URL config | `menu-admin-ui/src/api/live/` |
 | Local dev mock endpoint | `menu-admin-ui/app/api/dev/live-events/route.ts` |
 | Notifications bell integration | `menu-admin-ui/src/components/dashboard/NotificationsMenu.tsx` |

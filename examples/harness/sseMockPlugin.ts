@@ -1,14 +1,9 @@
-/**
- * Standalone mock SSE server implementing the contract in `docs/EVENTS_CONTRACT.md`.
- * Useful for exercising `@mmozer/sse-client` (and any consuming UI) end-to-end
- * before a real backend endpoint exists.
- *
- * Run with: `pnpm example:mock-server` (defaults to http://localhost:4310/stream)
- */
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
-const PORT = Number(process.env.MOCK_SSE_PORT ?? 4310);
+import type { Plugin } from 'vite';
+
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const DATA_EVENT_INTERVAL_MS = 2000;
 
 let nextEventId = 1;
 
@@ -20,7 +15,7 @@ function sseEvent(id: number, event: string, data: unknown): string {
   return `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-function randomAuditEvent() {
+function randomAuditEvent(): string {
   const actions = ['I', 'U', 'D'] as const;
   const tables = ['menu_publish_jobs', 'store_locations', 'menu_items'];
   const eventId = allocEventId();
@@ -34,7 +29,7 @@ function randomAuditEvent() {
   });
 }
 
-function randomMenuStatusEvent() {
+function randomMenuStatusEvent(): string {
   const id = allocEventId();
   const locationNumber = 1000 + Math.floor(Math.random() * 50);
   const processing = Math.random() < 0.5;
@@ -47,42 +42,12 @@ function randomMenuStatusEvent() {
   });
 }
 
-function writeCorsHeaders(res: ServerResponse): void {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Accept, Last-Event-ID, Content-Type');
-  res.setHeader('Access-Control-Max-Age', '86400');
-}
-
-const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-  const url = req.url?.split('?')[0] ?? '';
-
-  if (url !== '/stream') {
-    res.writeHead(404).end();
-    return;
-  }
-
-  // Browser reconnects send `Last-Event-ID`, which triggers a CORS preflight.
-  if (req.method === 'OPTIONS') {
-    writeCorsHeaders(res);
-    res.writeHead(204).end();
-    return;
-  }
-
-  if (req.method !== 'GET') {
-    writeCorsHeaders(res);
-    res.writeHead(405).end();
-    return;
-  }
-
-  writeCorsHeaders(res);
+function handleStream(req: IncomingMessage, res: ServerResponse): void {
   res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
+    'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
   });
-
-  // Flush headers immediately so proxies/browsers treat this as a live stream.
   res.write(': connected\n\n');
 
   const lastEventId = req.headers['last-event-id'];
@@ -91,23 +56,55 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (!Number.isNaN(parsed) && parsed >= nextEventId) {
       nextEventId = parsed + 1;
     }
-    console.log(`Client resumed from Last-Event-ID: ${lastEventId}`);
   }
 
   const dataInterval = setInterval(() => {
     res.write(Math.random() < 0.5 ? randomAuditEvent() : randomMenuStatusEvent());
-  }, 2000);
+  }, DATA_EVENT_INTERVAL_MS);
 
   const heartbeatInterval = setInterval(() => {
     res.write(': heartbeat\n\n');
   }, HEARTBEAT_INTERVAL_MS);
 
-  req.on('close', () => {
+  const cleanup = () => {
     clearInterval(dataInterval);
     clearInterval(heartbeatInterval);
-  });
-});
+  };
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Mock SSE server listening at http://127.0.0.1:${PORT}/stream`);
-});
+  req.on('close', cleanup);
+  res.on('close', cleanup);
+}
+
+/**
+ * Serves the contract mock at same-origin `/stream` inside the Vite dev server.
+ * Avoids cross-origin/`127.0.0.1` fetch failures that show up as
+ * `network-error: Failed to reach SSE endpoint` in the browser.
+ */
+export function sseMockPlugin(): Plugin {
+  return {
+    name: 'sse-mock-plugin',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = req.url?.split('?')[0] ?? '';
+        if (url !== '/stream') {
+          next();
+          return;
+        }
+
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+
+        if (req.method !== 'GET') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+
+        handleStream(req as IncomingMessage, res as ServerResponse);
+      });
+    },
+  };
+}

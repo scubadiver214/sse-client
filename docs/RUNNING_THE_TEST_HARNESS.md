@@ -1,29 +1,113 @@
 # Running the Test Harness — Live SSE Events
 
-This guide shows how to watch Server-Sent Events (SSE) in real time. There are two options:
+Ways to watch Server-Sent Events (SSE) in real time while developing `@mmozer/sse-client`.
 
-1. **Standalone mock server** — fastest; no login required; watch the raw event stream
-2. **Full app UI** — end-to-end path through `menu-admin-ui` (notifications + menu publisher)
+| Option | Best for | Login? |
+|--------|----------|--------|
+| **A. UI harness** (recommended) | Seeing events in a browser using the real React hooks | No |
+| **B. Raw `curl` stream** | Inspecting wire format only | No |
+| **C. menu-admin-ui** | End-to-end product path (notifications + menu publisher) | Yes |
 
-> **Note:** Unit tests (`pnpm test`) assert behavior; they do not stream live events. Use this guide for the interactive demo harness.
+> Unit tests (`pnpm test` / `pnpm test:run`) assert behavior; they do **not** stream live events.
 
 ---
 
-## Option A — Standalone mock server (fastest)
+## Option A — UI test harness (recommended)
 
-Runs the mock SSE server from `sse-client` only. No app login needed.
+One command starts a Vite/React UI on port **5173**. The contract mock is served **same-origin** at `/stream` by a Vite middleware plugin (`examples/harness/sseMockPlugin.ts`). No separate mock process and no cross-origin requests are required for the UI.
+
+> Tip: `pnpm example:mock-server` (port **4310**) is only for raw `curl` testing (Option B), not for the UI harness.
+
+### Layout
+
+| Path | Role |
+|------|------|
+| `examples/harness/` | Vite + React UI (`App.tsx`, styles, entry) |
+| `examples/harness/sseMockPlugin.ts` | Same-origin SSE mock at `/stream` |
+| `examples/harness/vite.config.ts` | Aliases `@mmozer/sse-client` → `src/` for live reload |
+| `examples/mock-sse-server.ts` | Standalone Node mock (Option B) |
+
+### Prerequisites
+
+- Node.js 20+
+- `pnpm` (see `packageManager` in `package.json`)
+
+### 1. Install (once)
+
+```bash
+cd lce-sse-client
+pnpm install
+```
+
+### 2. Start the harness
+
+```bash
+pnpm example:harness
+```
+
+Expected terminal output:
+
+```text
+➜  Local:   http://localhost:5173/
+```
+
+### 3. Open the UI
+
+Open **[http://localhost:5173/](http://localhost:5173/)** in your browser.
+
+What you should see:
+
+| UI element | Meaning |
+|------------|---------|
+| Status **Live** (green pulse) | SSE connection is open |
+| Event cards every ~2s | Alternating `audit-event` and `menu-status-changed` from the mock |
+| Filters | Show all events, or only one event type (with counts) |
+| **Pause feed** | Keeps the connection open but stops appending cards |
+| **Disconnect** / **Connect** | Tears down or re-opens the client |
+| **Clear** | Empties the in-memory feed |
+| `last id …` | Most recent SSE `id:` (used for `Last-Event-ID` on reconnect) |
+
+The harness uses `useSse` from this package (aliased to `src/`), so library changes hot-reload without a separate `pnpm build`.
+
+### 4. Optional — verify the stream outside the UI
+
+While the harness is running:
+
+```bash
+curl -N http://localhost:5173/stream
+```
+
+You should see `: connected`, then `audit-event` / `menu-status-changed` blocks every ~2 seconds.
+
+### 5. Stop
+
+Press `Ctrl+C` in the terminal to stop Vite.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `EADDRINUSE … :::5173` | Free the port: `lsof -ti :5173 \| xargs kill`, then `pnpm example:harness` |
+| Status **Failed** / `network-error: Failed to reach SSE endpoint` | 1) Hard-refresh (Cmd+Shift+R). 2) Confirm you are on current `main` (the client must bind `fetch` — unbound `window.fetch` throws `Illegal invocation` in browsers). 3) Confirm `curl -N http://localhost:5173/stream` prints events. 4) Restart `pnpm example:harness` |
+| Status stuck on **Connecting** / **Reconnecting** | Same checks as above; DevTools → Network should show a long-lived `GET /stream` with type `eventsource` / `fetch` and `200` |
+| UI loads but no cards | Status should be **Live**; feed not paused; filter not hiding the event type |
+| Expecting something on port **4310** | That port is only for Option B (`pnpm example:mock-server`). The UI harness uses **5173** only |
+
+---
+
+## Option B — Raw stream via curl
+
+Use this when you only care about the SSE wire format (no browser).
 
 ### 1. Start the mock server
 
 ```bash
-cd sse-client
+cd lce-sse-client
 pnpm example:mock-server
 ```
 
-You should see:
-
 ```text
-Mock SSE server listening at http://localhost:4310/stream
+Mock SSE server listening at http://127.0.0.1:4310/stream
 ```
 
 ### 2. Watch the stream
@@ -31,14 +115,14 @@ Mock SSE server listening at http://localhost:4310/stream
 In a second terminal:
 
 ```bash
-curl -N http://localhost:4310/stream
+curl -N http://127.0.0.1:4310/stream
 ```
 
 `-N` disables buffering so each event prints as it arrives.
 
-### What you should see
+### Example output
 
-Roughly every ~2 seconds, alternating `audit-event` and `menu-status-changed` payloads, for example:
+Roughly every ~2 seconds:
 
 ```text
 id: 1
@@ -56,32 +140,34 @@ Heartbeats appear as SSE comments about every 15 seconds:
 : heartbeat
 ```
 
-Press `Ctrl+C` in either terminal to stop.
+For `audit-event`, payload `eventId` matches the wire `id:`. The mock may honor `Last-Event-ID` by advancing its id counter; it does **not** replay a durable log.
+
+Press `Ctrl+C` to stop.
 
 ---
 
-## Option B — See events in the app UI
+## Option C — Events in menu-admin-ui
 
-Exercises the full path: Next.js mock route → `@mmozer/sse-client` → React hooks → `NotificationsMenu` / menu publisher.
+Exercises the product path: Next.js dev mock → linked package → `NotificationsMenu` / menu publisher.
 
 ### Prerequisites
 
-- `menu-admin-ui` depends on `@mmozer/sse-client` via a local `link:` (already configured for local development)
-- Build the client package if you have not yet:
+- Local link from `lce-menu-admin-ui` to this package (e.g. `"@lce/sse-client": "link:../lce-sse-client"` or equivalent)
+- Build the client if the app resolves `dist/` rather than source:
 
 ```bash
-cd sse-client
+cd lce-sse-client
 pnpm build
 ```
 
 ### 1. Start the admin UI
 
 ```bash
-cd menu-admin-ui
+cd lce-menu-admin-ui
 pnpm dev
 ```
 
-If `pnpm dev` fails because the checkout has no `.git` directory (the `predev` script reads git metadata), bypass the hook and start Next.js directly:
+If `pnpm dev` fails because the checkout has no `.git` directory (the `predev` script reads git metadata), start Next.js directly:
 
 ```bash
 pnpm exec next dev --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem
@@ -89,37 +175,38 @@ pnpm exec next dev --experimental-https --experimental-https-key ./certificates/
 
 ### 2. Use the UI
 
-1. Open the app in the browser and log in.
-2. Select an environment (required — the live stream connects when an environment is selected).
-3. Click the **notifications bell** in the top bar:
-   - A green connection dot appears when the stream is open
-   - Audit events appear in the menu as they arrive (~every few seconds from the dev mock)
-4. Open **Menu Publisher** — map/dashboard data refreshes when `menu-status-changed` events arrive (via React Query invalidation; no extra polling).
+1. Log in.
+2. Select an environment (the live stream connects only when one is selected).
+3. Open the **notifications** bell — green dot when connected; audit events appear as they arrive.
+4. Open **Menu Publisher** — data refreshes on `menu-status-changed` via React Query invalidation (no polling).
 
-### 3. Inspect the wire format in DevTools
+### 3. Inspect the wire format
 
-1. Open browser DevTools → **Network**
-2. Find the request to `/api/dev/live-events`
-3. In Chrome, open the **EventStream** tab to watch each event live
+1. DevTools → **Network**
+2. Find `/api/dev/live-events`
+3. Chrome → **EventStream** tab for a live event list
 
-The in-app mock is served only in non-production (`NODE_ENV !== 'production'`) at:
+Dev-only mock (not served in production):
 
 ```text
 /api/dev/live-events?environmentKind=<kind>
 ```
 
-If `NEXT_PUBLIC_LIVE_EVENTS_URL` is set, the UI uses that template instead of the local mock.
+If `NEXT_PUBLIC_LIVE_EVENTS_URL` is set, the app uses that URL template instead of the local mock.
 
 ---
 
 ## Quick reference
 
-| Goal                         | Command / path                                      |
-|-----------------------------|-----------------------------------------------------|
-| Mock server only            | `pnpm example:mock-server` (in `sse-client`)    |
-| Raw stream                  | `curl -N http://localhost:4310/stream`              |
-| App + UI                    | `pnpm dev` (in `menu-admin-ui`)                 |
-| In-app mock endpoint        | `/api/dev/live-events`                              |
-| Event contract              | See `EVENTS_CONTRACT.md` in the package root        |
-| System overview             | See [SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md)      |
-| Lunch & learn slides        | See [LUNCH_AND_LEARN.md](./LUNCH_AND_LEARN.md)      |
+| Goal | Command / path |
+|------|----------------|
+| UI harness | `pnpm example:harness` in `lce-sse-client` |
+| Harness URL | http://localhost:5173/ |
+| Harness stream (same origin) | http://localhost:5173/stream |
+| Harness source | `examples/harness/` |
+| Standalone mock (curl) | `pnpm example:mock-server` → http://127.0.0.1:4310/stream |
+| Raw stream via curl | `curl -N http://127.0.0.1:4310/stream` (or `:5173/stream` while harness runs) |
+| App UI | `pnpm dev` in `lce-menu-admin-ui` |
+| In-app mock | `/api/dev/live-events` |
+| Event contract | [EVENTS_CONTRACT.md](./EVENTS_CONTRACT.md) |
+| System overview | [SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md) |

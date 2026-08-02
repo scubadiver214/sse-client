@@ -41,7 +41,9 @@ export class SseClient<TEventMap extends SseEventMap = SseEventMap> {
     this.options = options;
     this.lastEventId = options.lastEventId;
     this.backoff = new ReconnectBackoff(options.reconnect);
-    this.fetchImpl = options.fetch ?? globalThis.fetch;
+    // Bind fetch — calling an unbound `window.fetch` throws "Illegal invocation" in browsers.
+    const resolvedFetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
+    this.fetchImpl = resolvedFetch;
 
     if (!this.fetchImpl) {
       throw new SseClientError('network-error', 'No `fetch` implementation available; pass one via `options.fetch`.');
@@ -151,8 +153,21 @@ export class SseClient<TEventMap extends SseEventMap = SseEventMap> {
       return;
     }
 
-    this.listeners.get(event)?.forEach((listener) => (listener as SseListener<unknown>)(payload, meta));
-    this.listeners.get(WILDCARD)?.forEach((listener) => (listener as SseWildcardListener)(payload, meta));
+    const notify = (invoke: () => void): void => {
+      try {
+        invoke();
+      } catch (cause) {
+        // Isolate consumer bugs so one handler cannot tear down the shared stream.
+        this.emitError(new SseClientError('listener-error', `SSE listener for event "${event}" threw`, { cause }));
+      }
+    };
+
+    this.listeners.get(event)?.forEach((listener) => {
+      notify(() => (listener as SseListener<unknown>)(payload, meta));
+    });
+    this.listeners.get(WILDCARD)?.forEach((listener) => {
+      notify(() => (listener as SseWildcardListener)(payload, meta));
+    });
   }
 
   private async resolveHeaders(): Promise<Headers> {
@@ -173,12 +188,13 @@ export class SseClient<TEventMap extends SseEventMap = SseEventMap> {
   }
 
   private async runConnectionLoop(generation: number): Promise<void> {
-    let attemptsMade = 0;
+    /** Counts consecutive *failed* connection attempts; reset after a successful open. */
+    let consecutiveFailures = 0;
     const maxAttempts = this.options.reconnect?.maxAttempts ?? Number.POSITIVE_INFINITY;
+    let hasOpenedOnce = false;
 
     while (!this.stopped && generation === this.generation) {
-      attemptsMade += 1;
-      this.setState(attemptsMade === 1 ? 'connecting' : 'reconnecting');
+      this.setState(hasOpenedOnce || consecutiveFailures > 0 ? 'reconnecting' : 'connecting');
 
       try {
         await this.openOnce(generation);
@@ -186,10 +202,14 @@ export class SseClient<TEventMap extends SseEventMap = SseEventMap> {
         if (this.stopped || generation !== this.generation) {
           return;
         }
+        // Clean close after a live session — do not consume the failure budget.
+        consecutiveFailures = 0;
+        hasOpenedOnce = true;
       } catch (error) {
         if (this.stopped || generation !== this.generation) {
           return;
         }
+        consecutiveFailures += 1;
         const clientError =
           error instanceof SseClientError ? error : new SseClientError('network-error', 'SSE connection failed', { cause: error });
         this.emitError(clientError);
@@ -199,7 +219,7 @@ export class SseClient<TEventMap extends SseEventMap = SseEventMap> {
         return;
       }
 
-      if (this.options.reconnect?.enabled === false || attemptsMade >= maxAttempts) {
+      if (this.options.reconnect?.enabled === false || consecutiveFailures >= maxAttempts) {
         this.setState('failed');
         return;
       }
@@ -243,6 +263,13 @@ export class SseClient<TEventMap extends SseEventMap = SseEventMap> {
 
     if (!response.ok) {
       throw new SseClientError('http-error', `SSE endpoint responded with HTTP ${response.status}`, { status: response.status });
+    }
+
+    const contentType = response.headers.get('content-type');
+    if (contentType && !contentType.toLowerCase().includes('text/event-stream')) {
+      throw new SseClientError('http-error', `SSE endpoint returned unexpected Content-Type: ${contentType}`, {
+        status: response.status,
+      });
     }
 
     if (!response.body) {

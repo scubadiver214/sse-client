@@ -187,6 +187,80 @@ describe('SseClient', () => {
     client.disconnect();
   });
 
+  it('does not count successful connections toward maxAttempts', async () => {
+    let call = 0;
+    const fetchMock = vi.fn().mockImplementation(() => {
+      call += 1;
+      // Each call opens briefly then closes cleanly. With maxAttempts: 2, a budget that
+      // incorrectly counted successes would `failed` before a third connect.
+      return Promise.resolve(okResponse([`id: ${call}\nevent: ping\ndata: {"at":${call}}\n\n`]));
+    });
+
+    const client = new SseClient<TestEvents>({
+      url: 'https://example.test/stream',
+      fetch: fetchMock,
+      reconnect: { enabled: true, initialDelayMs: 20, maxDelayMs: 20, jitter: false, maxAttempts: 2 },
+    });
+
+    client.connect();
+
+    await vi.waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 2000 });
+    expect(client.getState()).not.toBe('failed');
+    client.disconnect();
+  });
+
+  it('binds global fetch so it can be invoked without Illegal invocation', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(okResponse(['event: ping\ndata: {"at":1}\n\n']));
+    // Mimic browsers: extracting fetch from the global and calling it unbound throws.
+    const unboundFetch = fetchMock as unknown as typeof fetch;
+    Object.defineProperty(unboundFetch, 'name', { value: 'fetch' });
+    globalThis.fetch = function illegalIfUnbound(this: unknown, ...args: Parameters<typeof fetch>) {
+      if (this == null || this === globalThis) {
+        // When properly bound / called as globalThis.fetch(...), `this` is globalThis.
+      }
+      if (typeof this === 'undefined') {
+        throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+      }
+      return fetchMock(...args);
+    } as unknown as typeof fetch;
+
+    try {
+      const client = new SseClient<TestEvents>({
+        url: 'https://example.test/stream',
+        reconnect: { enabled: false },
+      });
+      const received: TestEvents['ping'][] = [];
+      client.on('ping', (payload) => received.push(payload));
+      client.connect();
+      await vi.waitFor(() => expect(received).toEqual([{ at: 1 }]));
+      client.disconnect();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('isolates listener errors so other listeners still receive events', async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(okResponse(['event: ping\ndata: {"at":1}\n\nevent: ping\ndata: {"at":2}\n\n']))
+    );
+    const client = new SseClient<TestEvents>({ url: 'https://example.test/stream', fetch: fetchMock, reconnect: { enabled: false } });
+
+    const onError = vi.fn();
+    const secondListener = vi.fn();
+    client.onError(onError);
+    client.on('ping', () => {
+      throw new Error('boom');
+    });
+    client.on('ping', secondListener);
+    client.connect();
+
+    await vi.waitFor(() => expect(secondListener).toHaveBeenCalledTimes(2));
+    expect(onError).toHaveBeenCalled();
+    expect((onError.mock.calls[0]?.[0] as SseClientError).reason).toBe('listener-error');
+    client.disconnect();
+  });
+
   it('disconnect() aborts the in-flight request and prevents further event dispatch', async () => {
     const abortSpy = vi.fn();
     const fetchMock = vi.fn().mockImplementation((_url: string, init: { signal: AbortSignal }) => {

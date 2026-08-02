@@ -4,9 +4,14 @@
 generic passed to `SseClient`/`useSse` fully determines which event names and
 payload shapes a given connection carries.
 
-No backend SSE endpoint exists yet as of this writing. Until it does,
-`examples/mock-sse-server.ts` in this repo implements this exact contract so
-the client (and any consuming UI) can be built and tested end-to-end.
+No backend SSE endpoint exists yet as of this writing. Until it does, this repo
+implements the contract in two places so the client (and any consuming UI) can
+be built and tested end-to-end:
+
+- `examples/harness/sseMockPlugin.ts` — same-origin `/stream` for `pnpm example:harness`
+- `examples/mock-sse-server.ts` — standalone server for `pnpm example:mock-server`
+
+See [RUNNING_THE_TEST_HARNESS.md](./RUNNING_THE_TEST_HARNESS.md).
 
 ## Transport
 
@@ -20,6 +25,10 @@ the client (and any consuming UI) can be built and tested end-to-end.
 - Servers should send an `id:` field with every event so clients can resume
   with `Last-Event-ID` after a reconnect without missing/duplicating events
   (`@mmozer/sse-client` sends this header automatically).
+- For `audit-event`, the payload `eventId` should match the wire `id:` value
+  (or be a stable unique key the UI can use for list identity).
+- Dev mocks may honor `Last-Event-ID` only by advancing their id counter; they
+  do not replay a durable log. Production backends should resume from the id.
 
 ## Event: `audit-event`
 

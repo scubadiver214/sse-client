@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { SseClient } from '../SseClient';
 import type { SseClientError, SseClientOptions, SseConnectionState, SseEventMap } from '../types';
@@ -10,6 +10,12 @@ export interface UseSseOptions<TEventMap extends SseEventMap> extends SseClientO
    * `useSse` call site that passes the same key. Defaults to `String(url)`,
    * so pointing two components at the same URL automatically shares a
    * connection; pass an explicit key to force isolation or sharing.
+   *
+   * The client is created once per key. If you change non-URL options that
+   * must take effect on a new connection (e.g. static `headers` objects,
+   * `parse`, or `reconnect` tuning), vary `key` (or `url`) so the registry
+   * opens a fresh client. Prefer `headers` as a function if values change
+   * over time without a reconnect.
    */
   key?: string;
 }
@@ -32,47 +38,47 @@ export interface UseSseResult<TEventMap extends SseEventMap> {
  * to subscribe to specific event types on that client.
  */
 export function useSse<TEventMap extends SseEventMap = SseEventMap>(options: UseSseOptions<TEventMap> | null): UseSseResult<TEventMap> {
-  const key = options ? options.key ?? String(options.url) : null;
+  const key = options ? (options.key ?? String(options.url)) : null;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
+  const [client, setClient] = useState<SseClient<TEventMap> | null>(null);
   const [state, setState] = useState<SseConnectionState>('idle');
   const [error, setError] = useState<SseClientError | null>(null);
 
-  // `options` intentionally isn't a dependency here beyond `key`: reconnecting on every
-  // render (e.g. when callers pass an inline object literal) would defeat connection
-  // sharing. Callers who need different behavior per URL should vary `key` accordingly.
-  const client = useMemo(() => {
-    if (!options || !key) {
-      return null;
-    }
-    return acquireSseClient(key, () => new SseClient<TEventMap>(options));
-    // `options` is intentionally omitted from deps; see the comment above.
-  }, [key]);
-
+  // Acquire/release only in an effect so React Strict Mode's mount → cleanup →
+  // remount cycle cannot leak a connection (refcount must not be bumped during render).
   useEffect(() => {
-    if (!client || !key) {
+    const currentOptions = optionsRef.current;
+    if (!key || !currentOptions) {
+      setClient(null);
       setState('idle');
       setError(null);
       return;
     }
 
-    setState(client.getState());
+    const acquired = acquireSseClient(key, () => new SseClient<TEventMap>(currentOptions));
+    setClient(acquired);
+    setState(acquired.getState());
     setError(null);
 
-    const unsubscribeState = client.onStateChange((next) => {
+    const unsubscribeState = acquired.onStateChange((next) => {
       setState(next);
       if (next === 'open') {
         setError(null);
       }
     });
-    const unsubscribeError = client.onError(setError);
+    const unsubscribeError = acquired.onError(setError);
 
-    client.connect();
+    acquired.connect();
 
     return () => {
       unsubscribeState();
       unsubscribeError();
       releaseSseClient(key);
+      setClient(null);
     };
-  }, [client, key]);
+  }, [key]);
 
   return { client, state, error };
 }

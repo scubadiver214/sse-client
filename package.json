@@ -26,7 +26,7 @@
   "files": [
     "dist",
     "README.md",
-    "EVENTS_CONTRACT.md"
+    "docs/EVENTS_CONTRACT.md"
   ],
   "keywords": [
     "sse",
@@ -56,7 +56,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm run build",
-    "example:mock-server": "tsx examples/mock-sse-server.ts"
+    "example:mock-server": "tsx examples/mock-sse-server.ts",
+    "example:harness": "vite --config examples/harness/vite.config.ts"
   },
   "peerDependencies": {
     "react": ">=18.0.0"
@@ -71,6 +72,9 @@
     "@testing-library/react": "^16.3.2",
     "@types/node": "^20.19.35",
     "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "concurrently": "^9.2.1",
     "eslint": "^9.39.3",
     "jsdom": "^28.1.0",
     "prettier": "^3.8.1",
@@ -80,6 +84,7 @@
     "tsx": "^4.20.9",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1",
+    "vite": "^7.3.1",
     "vitest": "^4.0.18"
   },
   "packageManager": "pnpm@11.18.0",
